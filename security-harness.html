@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Threads吹奏楽部 RLS実JWT検証</title>
+    <style>
+      body{font-family:system-ui,sans-serif;background:#eef6f3;color:#082f2b;margin:0;padding:32px}main{max-width:760px;margin:auto;background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 30px #064e3b18}label{display:block;margin:14px 0 6px}input,select,button{font:inherit;padding:12px;border:1px solid #9bbdb4;border-radius:10px}input{width:calc(100% - 26px)}button{margin-top:18px;background:#0f766e;color:#fff;border:0;cursor:pointer}button:disabled{opacity:.55}pre{white-space:pre-wrap;background:#f4f8f7;padding:16px;border-radius:12px;min-height:120px}.ok{color:#047857}.bad{color:#b91c1c}.note{color:#526b66}
+    </style>
+    <script type="module" crossorigin src="./assets/securityHarness-CdPRubr7.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/index-DobLe4mk.js">
+  </head>
+  <body>
+    <main>
+      <h1>RLS実JWT検証</h1>
+      <p class="note">入力値・JWTは画面やログへ表示しません。検証後は自動ログアウトします。</p>
+      <label for="kind">検証する権限</label>
+      <select id="kind"><option value="admin">管理者</option><option value="nonadmin">非管理者</option></select>
+      <label for="email">メールアドレス</label><input id="email" type="email" autocomplete="username" />
+      <label for="password">パスワード</label><input id="password" type="password" autocomplete="current-password" />
+      <button id="run">検証開始</button>
+      <button id="magic" type="button">管理者用メールリンクを送る</button>
+      <pre id="result">未実行</pre>
+    </main>
+  </body>
+</html>
