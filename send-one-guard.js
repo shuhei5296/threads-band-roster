@@ -109,10 +109,11 @@ function injectLatestTrialPanel(){
   panel.innerHTML=`<h3>社長コメント1件限定試験（部長限定）</h3>
     <div class="notice"><b>開始操作ではThreads APIを呼びません</b>
     <p>試験開始から10分以内に、@shuhei5296 が投稿した「私の楽器は？」だけを次の取得対象にします。監視・Cron・自動返信は再開しません。</p></div>
-    <button id="armLatestAutoReplyTrial">1件限定試験を開始</button>
+    <div class="row"><button id="armLatestAutoReplyTrial">1件限定試験を開始</button><button id="prepareLatestAutoReplyTrial" class="secondary">投稿済みコメントを1回だけ取得</button></div>
     <pre id="latestAutoReplyTrialResult" class="result notice">未開始です。</pre>`
 
   const button=panel.querySelector('#armLatestAutoReplyTrial')
+  const prepareButton=panel.querySelector('#prepareLatestAutoReplyTrial')
   const resultNode=panel.querySelector('#latestAutoReplyTrialResult')
   let busy=false
   button.onclick=async()=>{
@@ -129,6 +130,19 @@ function injectLatestTrialPanel(){
     }catch(error){
       resultNode.textContent=`開始できません：${error.message}\nThreads APIは呼び出していません。`
       button.disabled=false
+    }finally{busy=false}
+  }
+  prepareButton.onclick=async()=>{
+    if(busy)return
+    if(!confirm('Threads APIを1回だけ呼び、先頭1ページから社長本人の「私の楽器は？」を探します。実行しますか？'))return
+    busy=true;button.disabled=true;prepareButton.disabled=true;resultNode.textContent='対象コメントを1回だけ取得しています…'
+    try{
+      const result=await invoke({action:'prepare_latest_auto_reply_trial',approval:'PREPARE_LATEST_AUTO_REPLY'})
+      const value=result.data??{}
+      if(result.http!==200||value.ok!==true)throw new Error(value.error??`HTTP ${result.http}`)
+      resultNode.textContent=`対象を固定し、下書きを生成しました。\n対象：${value.username??'@shuhei5296'}\n返信ID：${value.target_reply_id??'取得済み'}\nThreads API呼び出し：${value.api_calls??1}回\nThreadsへの送信：0回\nこの下書きはまだ送信されていません。`
+    }catch(error){
+      resultNode.textContent=`取得を安全停止しました：${error.message}\n追加取得・送信は行っていません。`
     }finally{busy=false}
   }
   anchor.before(panel)
