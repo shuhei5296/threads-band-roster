@@ -98,5 +98,42 @@ function injectPanel(){
   anchor.before(panel)
 }
 
-new MutationObserver(injectPanel).observe(document.documentElement,{childList:true,subtree:true})
+function injectLatestTrialPanel(){
+  if(document.querySelector('#latestAutoReplyTrialPanel'))return
+  const anchor=document.querySelector('#botDiagnosticPanel')??document.querySelector('#botDraftsPanel')
+  if(!anchor)return
+
+  const panel=document.createElement('section')
+  panel.className='panel'
+  panel.id='latestAutoReplyTrialPanel'
+  panel.innerHTML=`<h3>社長コメント1件限定試験（部長限定）</h3>
+    <div class="notice"><b>開始操作ではThreads APIを呼びません</b>
+    <p>試験開始から10分以内に、@shuhei5296 が投稿した「私の楽器は？」だけを次の取得対象にします。監視・Cron・自動返信は再開しません。</p></div>
+    <button id="armLatestAutoReplyTrial">1件限定試験を開始</button>
+    <pre id="latestAutoReplyTrialResult" class="result notice">未開始です。</pre>`
+
+  const button=panel.querySelector('#armLatestAutoReplyTrial')
+  const resultNode=panel.querySelector('#latestAutoReplyTrialResult')
+  let busy=false
+  button.onclick=async()=>{
+    if(busy)return
+    if(!confirm('10分間の1件限定試験を開始します。開始時点ではThreads APIを呼びません。実行しますか？'))return
+    busy=true;button.disabled=true;resultNode.textContent='試験を開始しています…'
+    try{
+      const result=await invoke({action:'arm_latest_auto_reply_trial',approval:'ARM_LATEST_AUTO_REPLY'})
+      const value=result.data??{}
+      if(result.http!==200||value.ok!==true)throw new Error(value.error??`HTTP ${result.http}`)
+      const started=value.auto_reply_trial_started_at
+      const expires=value.auto_reply_trial_ends_at
+      resultNode.textContent=`開始しました。\n開始：${started?new Date(started).toLocaleString('ja-JP'):'記録済み'}\n期限：${expires?new Date(expires).toLocaleString('ja-JP'):'開始から10分'}\nThreads API呼び出し：0回\n次に @shuhei5296 で「私の楽器は？」と投稿してください。`
+    }catch(error){
+      resultNode.textContent=`開始できません：${error.message}\nThreads APIは呼び出していません。`
+      button.disabled=false
+    }finally{busy=false}
+  }
+  anchor.before(panel)
+}
+
+new MutationObserver(()=>{injectPanel();injectLatestTrialPanel()}).observe(document.documentElement,{childList:true,subtree:true})
 injectPanel()
+injectLatestTrialPanel()
