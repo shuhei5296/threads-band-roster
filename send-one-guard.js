@@ -109,13 +109,15 @@ function injectLatestTrialPanel(){
   panel.innerHTML=`<h3>社長コメント1件限定試験（部長限定）</h3>
     <div class="notice"><b>開始操作ではThreads APIを呼びません</b>
     <p>試験開始から10分以内に、@shuhei5296 が投稿した「私の楽器は？」だけを次の取得対象にします。監視・Cron・自動返信は再開しません。</p></div>
-    <div class="row"><button id="armLatestAutoReplyTrial">1件限定試験を開始</button><button id="prepareLatestAutoReplyTrial" class="secondary">投稿済みコメントを1回だけ取得</button></div>
+    <div class="row"><button id="armLatestAutoReplyTrial">1件限定試験を開始</button><button id="prepareLatestAutoReplyTrial" class="secondary">投稿済みコメントを1回だけ取得</button><button id="previewLatestAutoReplyTrial" class="secondary">下書きを最終確認</button><button id="sendLatestAutoReplyTrial" disabled>この1件だけ送信</button></div>
     <pre id="latestAutoReplyTrialResult" class="result notice">未開始です。</pre>`
 
   const button=panel.querySelector('#armLatestAutoReplyTrial')
   const prepareButton=panel.querySelector('#prepareLatestAutoReplyTrial')
+  const previewButton=panel.querySelector('#previewLatestAutoReplyTrial')
+  const sendButton=panel.querySelector('#sendLatestAutoReplyTrial')
   const resultNode=panel.querySelector('#latestAutoReplyTrialResult')
-  let busy=false
+  let busy=false,previewReady=false,trialReplyId=''
   button.onclick=async()=>{
     if(busy)return
     if(!confirm('10分間の1件限定試験を開始します。開始時点ではThreads APIを呼びません。実行しますか？'))return
@@ -140,10 +142,38 @@ function injectLatestTrialPanel(){
       const result=await invoke({action:'prepare_latest_auto_reply_trial',approval:'PREPARE_LATEST_AUTO_REPLY'})
       const value=result.data??{}
       if(result.http!==200||value.ok!==true)throw new Error(value.error??`HTTP ${result.http}`)
+      trialReplyId=value.target_reply_id??''
       resultNode.textContent=`対象を固定し、下書きを生成しました。\n対象：${value.username??'@shuhei5296'}\n返信ID：${value.target_reply_id??'取得済み'}\nThreads API呼び出し：${value.api_calls??1}回\nThreadsへの送信：0回\nこの下書きはまだ送信されていません。`
     }catch(error){
       resultNode.textContent=`取得を安全停止しました：${error.message}\n追加取得・送信は行っていません。`
     }finally{busy=false}
+  }
+  previewButton.onclick=async()=>{
+    if(busy)return
+    busy=true;previewReady=false;sendButton.disabled=true;previewButton.disabled=true;resultNode.textContent='下書きと重複履歴を確認しています…'
+    try{
+      const result=await invoke({action:'preview_one_auto_reply_trial'})
+      const value=result.data??{}
+      if(result.http!==200||value.ok!==true||value.eligible!==true||value.duplicate_exists!==false||value.status!=='pending'||Number(value.attempts)!==0)throw new Error(value.error??'安全条件が一致しません')
+      trialReplyId=value.reply_to_id??''
+      previewReady=Boolean(trialReplyId&&value.recipient==='@shuhei5296'&&value.body)
+      if(!previewReady)throw new Error('宛先・本文・返信IDを確認できません')
+      resultNode.textContent=`送信前確認：全条件一致\n対象：${value.recipient}\n返信ID：${trialReplyId}\nジョブ：${value.job_id}\n試行回数：${value.attempts}\n重複履歴：なし\n\n--- 送信予定本文 ---\n${value.body}`
+      sendButton.disabled=false
+    }catch(error){resultNode.textContent=`送信不可：${error.message}`}
+    finally{busy=false;previewButton.disabled=false}
+  }
+  sendButton.onclick=async()=>{
+    if(busy||!previewReady||!trialReplyId)return
+    if(!confirm(`@shuhei5296 の返信ID ${trialReplyId} へ、表示中の下書きを1回だけ送信します。\n他のジョブは処理しません。送信しますか？`))return
+    busy=true;previewReady=false;sendButton.disabled=true;resultNode.textContent='対象1件だけを送信中です。再操作しないでください…'
+    try{
+      const result=await invoke({action:'run_one_auto_reply_trial',reply_id:trialReplyId,approval:'RUN_ONE_AUTO_REPLY'})
+      const value=result.data??{}
+      if(result.http!==200||value.ok!==true||value.replies_sent!==1)throw new Error(value.error??`HTTP ${result.http}`)
+      resultNode.textContent=`限定送信成功\n送信件数：1件\nジョブ：${value.outcome?.job_id??'記録済み'}\nThreads返信ID：${value.outcome?.threads_reply_id??'記録済み'}\n試験後は自動返信OFF・監視停止へ戻しました。`
+    }catch(error){resultNode.textContent=`送信成功を確認できません：${error.message}\n自動再送は行いません。`}
+    finally{busy=false}
   }
   anchor.before(panel)
 }
