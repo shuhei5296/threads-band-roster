@@ -132,7 +132,7 @@ function injectLatestTrialPanel(){
     }catch(error){
       resultNode.textContent=`開始できません：${error.message}\nThreads APIは呼び出していません。`
       button.disabled=false
-    }finally{busy=false}
+    }finally{busy=false;prepareButton.disabled=false}
   }
   prepareButton.onclick=async()=>{
     if(busy)return
@@ -146,7 +146,7 @@ function injectLatestTrialPanel(){
       resultNode.textContent=`対象を固定し、下書きを生成しました。\n対象：${value.username??'@shuhei5296'}\n返信ID：${value.target_reply_id??'取得済み'}\nThreads API呼び出し：${value.api_calls??1}回\nThreadsへの送信：0回\nこの下書きはまだ送信されていません。`
     }catch(error){
       resultNode.textContent=`取得を安全停止しました：${error.message}\n追加取得・送信は行っていません。`
-    }finally{busy=false}
+    }finally{busy=false;prepareButton.disabled=false}
   }
   previewButton.onclick=async()=>{
     if(busy)return
