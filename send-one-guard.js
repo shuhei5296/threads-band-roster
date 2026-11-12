@@ -32,8 +32,12 @@ function sessionToken(){
   return token
 }
 
-async function invoke(body){
-  const response=await fetch(FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${sessionToken()}`},body:JSON.stringify(body)})
+async function invoke(body,{timeoutMs=0}={}){
+  const controller=timeoutMs>0?new AbortController():null
+  const timer=controller?setTimeout(()=>controller.abort(),timeoutMs):null
+  let response
+  try{response=await fetch(FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${sessionToken()}`},body:JSON.stringify(body),signal:controller?.signal})}
+  finally{if(timer)clearTimeout(timer)}
   let data={};try{data=await response.json()}catch{}
   return{http:response.status,data}
 }
@@ -109,15 +113,40 @@ function injectLatestTrialPanel(){
   panel.innerHTML=`<h3>社長コメント1件限定試験（部長限定）</h3>
     <div class="notice"><b>開始操作ではThreads APIを呼びません</b>
     <p>試験開始から10分以内に、@shuhei5296 が投稿した「私の楽器は？」だけを次の取得対象にします。監視・Cron・自動返信は再開しません。</p></div>
-    <div class="row"><button id="armLatestAutoReplyTrial">1件限定試験を開始</button><button id="prepareLatestAutoReplyTrial" class="secondary">投稿済みコメントを1回だけ取得</button><button id="previewLatestAutoReplyTrial" class="secondary">下書きを最終確認</button><button id="sendLatestAutoReplyTrial" disabled>この1件だけ送信</button></div>
+    <div class="row"><button id="armLatestAutoReplyTrial">1件限定試験を開始</button><button id="prepareLatestAutoReplyTrial" class="secondary">投稿済みコメントを1回だけ取得</button><button id="previewLatestAutoReplyTrial" class="secondary">下書きを最終確認</button><button id="statusLatestAutoReplyTrial" class="secondary">送信状態を確認</button><button id="sendLatestAutoReplyTrial" disabled>この1件だけ送信</button></div>
     <pre id="latestAutoReplyTrialResult" class="result notice">未開始です。</pre>`
 
   const button=panel.querySelector('#armLatestAutoReplyTrial')
   const prepareButton=panel.querySelector('#prepareLatestAutoReplyTrial')
   const previewButton=panel.querySelector('#previewLatestAutoReplyTrial')
+  const statusButton=panel.querySelector('#statusLatestAutoReplyTrial')
   const sendButton=panel.querySelector('#sendLatestAutoReplyTrial')
   const resultNode=panel.querySelector('#latestAutoReplyTrialResult')
   let busy=false,previewReady=false,trialReplyId=''
+  const renderStatus=async(prefix='')=>{
+    const result=await invoke({action:'get_one_auto_reply_trial_status',reply_id:trialReplyId})
+    const value=result.data??{}
+    if(result.http!==200||value.ok!==true)throw new Error(value.error??`HTTP ${result.http}`)
+    trialReplyId=value.reply_to_id??trialReplyId
+    previewReady=false;sendButton.disabled=true
+    if(value.completed&&value.outbound_count===1){
+      sendButton.textContent='送信済み';statusButton.disabled=false
+      resultNode.textContent=`${prefix}送信完了をDB履歴で確認しました。\n送信件数：1件\nジョブ：${value.job_id}\nThreads返信ID：${value.threads_reply_id??'記録済み'}\n再送は禁止されています。\n自動返信OFF・監視停止を維持しています。`
+      return value
+    }
+    if(value.outcome_unknown){
+      sendButton.textContent='結果確認待ち';statusButton.disabled=false
+      resultNode.textContent=`${prefix}送信結果は確定できません。\nジョブ状態：${value.job_status}\n自動再送は禁止されています。管理者がThreads上と監査ログを照合してください。`
+      return value
+    }
+    if(value.job_status==='failed'){
+      sendButton.textContent='送信失敗・再送禁止';statusButton.disabled=false
+      resultNode.textContent=`${prefix}Threads APIが送信を拒否しました。\nジョブ状態：failed\n${value.last_error??''}\n自動再送は禁止されています。`
+      return value
+    }
+    resultNode.textContent=`${prefix}送信は未完了です。\nジョブ状態：${value.job_status}\n試行回数：${value.attempts}\n状態確認では送信していません。`
+    return value
+  }
   button.onclick=async()=>{
     if(busy)return
     if(!confirm('10分間の1件限定試験を開始します。開始時点ではThreads APIを呼びません。実行しますか？'))return
@@ -163,16 +192,27 @@ function injectLatestTrialPanel(){
     }catch(error){resultNode.textContent=`送信不可：${error.message}`}
     finally{busy=false;previewButton.disabled=false}
   }
+  statusButton.onclick=async()=>{
+    if(busy)return
+    busy=true;statusButton.disabled=true;resultNode.textContent='DBの送信履歴を確認しています…'
+    try{await renderStatus()}
+    catch(error){resultNode.textContent=`状態確認失敗：${error.message}\n送信は行っていません。再送しないでください。`}
+    finally{busy=false;statusButton.disabled=false}
+  }
   sendButton.onclick=async()=>{
     if(busy||!previewReady||!trialReplyId)return
     if(!confirm(`@shuhei5296 の返信ID ${trialReplyId} へ、表示中の下書きを1回だけ送信します。\n他のジョブは処理しません。送信しますか？`))return
     busy=true;previewReady=false;sendButton.disabled=true;resultNode.textContent='対象1件だけを送信中です。再操作しないでください…'
     try{
-      const result=await invoke({action:'run_one_auto_reply_trial',reply_id:trialReplyId,approval:'RUN_ONE_AUTO_REPLY'})
+      const result=await invoke({action:'run_one_auto_reply_trial',reply_id:trialReplyId,approval:'RUN_ONE_AUTO_REPLY'},{timeoutMs:25000})
       const value=result.data??{}
       if(result.http!==200||value.ok!==true||value.replies_sent!==1)throw new Error(value.error??`HTTP ${result.http}`)
       resultNode.textContent=`限定送信成功\n送信件数：1件\nジョブ：${value.outcome?.job_id??'記録済み'}\nThreads返信ID：${value.outcome?.threads_reply_id??'記録済み'}\n試験後は自動返信OFF・監視停止へ戻しました。`
-    }catch(error){resultNode.textContent=`送信成功を確認できません：${error.message}\n自動再送は行いません。`}
+    }catch(error){
+      resultNode.textContent=`画面への応答が途切れました。DB状態を照会しています…\n自動再送は行いません。`
+      try{await renderStatus('画面応答タイムアウト後の照合：')}
+      catch(statusError){resultNode.textContent=`送信結果を確認できません：${error.message}\n状態照会も失敗：${statusError.message}\n再送せず、管理者確認が必要です。`}
+    }
     finally{busy=false}
   }
   anchor.before(panel)
