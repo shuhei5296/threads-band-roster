@@ -18,6 +18,14 @@ async function rolloutInvoke(body){
 const fmt=value=>value?new Date(value).toLocaleString('ja-JP'):'—'
 const names=value=>String(value??'').split(/[\s,、]+/).map(v=>v.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean)
 
+function phaseBRequest(accounts,totalValue,hourlyValue){
+  const allowed=[...new Set(names(accounts))]
+  const total=Number(totalValue),hourly=Number(hourlyValue)
+  if(allowed.length<1||allowed.length>5||allowed.some(v=>!/^[a-z0-9._]+$/.test(v)))throw new Error('有効な許可アカウントを1〜5名指定してください。')
+  if(!Number.isInteger(total)||total<1||total>5||!Number.isInteger(hourly)||hourly<1||hourly>total)throw new Error('総上限は1〜5件、時間上限は1件以上かつ総上限以下にしてください。')
+  return {action:'start_staged_rollout',phase:'B',allowed_usernames:allowed,max_sends:total,duration_minutes:60,max_usage_percent:10,hourly_max_sends:hourly,approval:'START_PHASE_B'}
+}
+
 function rolloutPanel(){
   if(document.querySelector('#stagedRolloutOpsPanel'))return
   const anchor=document.querySelector('#botDraftsPanel')??document.querySelector('#botDiagnosticPanel')
@@ -28,7 +36,10 @@ function rolloutPanel(){
     <pre id="rolloutStatus" class="result notice">状態を取得しています…</pre>
     <div class="row"><button id="refreshRollout" class="secondary">状態を更新</button><button id="emergencyStopRollout" class="secondary">緊急停止</button></div>
     <h4>フェーズB（最大5アカウント・5件・60分）</h4>
-    <label>許可アカウント（カンマ区切り、1〜5件）<input id="phaseBAccounts" type="text" placeholder="shuhei5296"></label>
+    <label>許可アカウント（カンマ区切り、1〜5件）<input id="phaseBAccounts" type="text" value="k.akemi1210, rappa_hotaru"></label>
+    <label>総送信上限 <input id="phaseBTotal" type="number" min="1" max="5" step="1" value="2"></label>
+    <label>1時間の送信上限 <input id="phaseBHourly" type="number" min="1" max="5" step="1" value="2"></label>
+    <p>実施時間60分／監視15分間隔／API利用率10%以上で停止</p>
     <div class="row"><button id="startPhaseB">承認済みフェーズBを開始</button></div>
     <h4>フェーズC（通常運用の安全枠）</h4>
     <label>24時間の総送信上限 <input id="phaseCTotal" type="number" min="1" max="100" value="50"></label>
@@ -49,10 +60,35 @@ function rolloutPanel(){
   panel.querySelector('#refreshRollout').onclick=refresh
   panel.querySelector('#emergencyStopRollout').onclick=async()=>{if(!confirm('段階運用・自動返信・監視Cronを直ちに停止しますか？'))return;try{render(await rolloutInvoke({action:'stop_staged_rollout',approval:'EMERGENCY_STOP'}))}catch(error){status.textContent=`緊急停止を確認できません：${error.message}`}}
   panel.querySelector('#startPhaseB').onclick=async()=>{
-    const allowed=names(panel.querySelector('#phaseBAccounts').value)
-    if(allowed.length<1||allowed.length>5){status.textContent='フェーズBは1〜5アカウントを指定してください。';return}
-    if(!confirm(`フェーズBを60分開始します。\n許可：${allowed.map(v=>`@${v}`).join('、')}\n最大送信：5件\n開始しますか？`))return
-    try{render(await rolloutInvoke({action:'start_staged_rollout',phase:'B',allowed_usernames:allowed,max_sends:5,duration_minutes:60,max_usage_percent:10,hourly_max_sends:5,approval:'START_PHASE_B'}))}catch(error){status.textContent=`開始できません：${error.message}`}
+    const button=panel.querySelector('#startPhaseB')
+    if(button.disabled)return
+    let request
+    try{
+      request=phaseBRequest(panel.querySelector('#phaseBAccounts').value,panel.querySelector('#phaseBTotal').value,panel.querySelector('#phaseBHourly').value)
+    }catch(error){status.textContent=error.message;return}
+    const end=fmt(Date.now()+60*60_000)
+    if(!confirm(`フェーズBを60分開始します。\n許可：${request.allowed_usernames.map(v=>`@${v}`).join('、')}\n総上限：${request.max_sends}件／時間上限：${request.hourly_max_sends}件\n終了予定（目安）：${end}\n自動返信をONにし、Threadsへ実際に返信します。開始しますか？`))return
+    button.disabled=true
+    try{
+      const before=await rolloutInvoke({action:'get_staged_rollout_status'})
+      if(before.paused!==true||before.auto_reply_enabled!==false||before.rollout_active!==false||before.active_cron_count!==0){
+        render(before);status.textContent+='\n開始には停止・自動返信OFF・有効Cron 0件が必要です。';return
+      }
+      try{await rolloutInvoke(request)}catch(error){
+        status.textContent=`開始要求の結果を確認できません：${error.message}。再操作前に「状態を更新」を押してください。`;return
+      }
+      const actual=await rolloutInvoke({action:'get_staged_rollout_status'})
+      render(actual)
+      const expected=JSON.stringify([...request.allowed_usernames].sort())
+      if(actual.phase!=='B'||actual.paused!==false||actual.rollout_active!==true||actual.auto_reply_enabled!==true||
+         actual.max_sends!==request.max_sends||actual.hourly_max_sends!==request.hourly_max_sends||
+         JSON.stringify([...(actual.allowed_usernames??[])].sort())!==expected||
+         !actual.cron_jobs?.some(j=>j.active&&j.jobname==='threads-roster-bot-poll'&&j.schedule==='*/15 * * * *')||
+         !actual.cron_jobs?.some(j=>j.active&&j.jobname==='threads-roster-rollout-auto-stop'&&j.schedule==='* * * * *')){
+        status.textContent+='\n指定条件での開始を確認できません。状態を確認してください。'
+      }
+    }catch(error){status.textContent=`状態を確認できません：${error.message}。再操作前に「状態を更新」を押してください。`}
+    finally{button.disabled=false}
   }
   panel.querySelector('#startPhaseC').onclick=async()=>{
     const total=Number(panel.querySelector('#phaseCTotal').value),hourly=Number(panel.querySelector('#phaseCHourly').value)
