@@ -22,6 +22,20 @@ function legacyStage(item){
   return oldButton?'本人確認未実施（旧下書き）':'旧キュー移行済み・本人確認未実施'
 }
 
+function legacyCategory(item){
+  if(item.rescue_category)return item.rescue_category
+  if(item.identity_status==='send_approved')return'auto_rescue_wait'
+  if(item.identity_status==='verified')return'reply_review_wait'
+  if(['claimed','unknown','rejected'].includes(item.identity_status))return'failed_or_unknown'
+  if(item.identity_status==='consumed')return'completed'
+  return'identity_wait'
+}
+
+const legacyCategoryLabels={
+  auto_rescue_wait:'自動救済待ち',identity_wait:'本人確認待ち',reply_review_wait:'返信文確認待ち',
+  failed_or_unknown:'送信失敗・結果不明',completed:'救済完了',no_rescue:'救済不要',
+}
+
 function legacyCard(item,refresh){
   const card=document.createElement('article');card.className='notice';card.style.marginBottom='1rem'
   card.innerHTML=`<div class="row between"><h4>@${esc(item.username)}</h4><span class="status">${esc(legacyStage(item))}</span></div>
@@ -40,9 +54,10 @@ function legacyCard(item,refresh){
 function injectLegacyRescue(){
   if(document.querySelector('#legacyRescuePanel'))return
   const anchor=document.querySelector('#botDraftsPanel')??document.querySelector('#botDiagnosticPanel');if(!anchor)return
-  const panel=document.createElement('section');panel.className='panel';panel.id='legacyRescuePanel';panel.innerHTML='<h3>既存未返信コメント救済（部長確認・1件限定）</h3><div class="notice"><b>本人確認と送信承認は別操作です</b><p>社長本人の古い投稿、送信済み、試行済み、失敗・結果不明ジョブは表示しません。フェーズB/Cとは独立しています。</p></div><div class="row"><button id="refreshLegacyRescue" class="secondary">候補を更新</button></div><div id="legacyRescueList"><p>読み込み中…</p></div>'
+  const panel=document.createElement('section');panel.className='panel';panel.id='legacyRescuePanel';panel.innerHTML='<h3>既存未返信コメント救済（部長確認・自動救済準備）</h3><div class="notice"><b>本人確認・返信文確認・送信承認は別段階です</b><p>本人照合済み・未試行・未送信・承認済み定型文だけが将来の自動救済対象です。数値ID未確認、未登録、failed／dead、社長本人の重複は自動送信しません。フェーズB/Cとは独立し、進行中のフェーズC送信枠とは分離します。</p></div><div class="row"><button id="refreshLegacyRescue" class="secondary">候補を更新</button></div><div id="legacyRescueSummary" class="notice">状態を集計しています…</div><div id="legacyRescueList"><p>読み込み中…</p></div>'
   const list=panel.querySelector('#legacyRescueList')
-  const refresh=async()=>{list.innerHTML='<p>候補を照合しています…</p>';try{const value=await legacyInvoke({action:'list_legacy_rescue_candidates'});list.innerHTML='';legacyCandidateIds.clear();(value.candidates??[]).forEach(item=>legacyCandidateIds.add(item.job_id));protectLegacyDraftButtons();if(value.diagnostics?.partial){const warning=document.createElement('p');warning.className='notice';warning.textContent=`候補は部分取得です。確認済み ${value.diagnostics.checked_count-value.diagnostics.failed_count}件／未確認 ${value.diagnostics.failed_count}件（${Object.entries(value.diagnostics.error_codes??{}).map(([code,count])=>`${code}:${count}`).join('、')||'原因不明'}）`;list.append(warning)}if(!value.candidates?.length){const empty=document.createElement('p');empty.textContent=value.diagnostics?.partial?'正常確認できた候補はありません。未確認分を0件として扱わないでください。':'安全条件を満たす未返信候補はありません。旧「送信承認キューへ」は使用せず、候補を更新してください。';list.append(empty);return}value.candidates.forEach(item=>list.append(legacyCard(item,refresh)))}catch(error){list.textContent=`候補取得失敗：${error.message}`}}
+  const summary=panel.querySelector('#legacyRescueSummary')
+  const refresh=async()=>{list.innerHTML='<p>候補を照合しています…</p>';summary.textContent='状態を集計しています…';try{const value=await legacyInvoke({action:'list_legacy_rescue_candidates'});list.innerHTML='';legacyCandidateIds.clear();const candidates=value.candidates??[];candidates.forEach(item=>legacyCandidateIds.add(item.job_id));protectLegacyDraftButtons();const counts={};candidates.forEach(item=>{const category=legacyCategory(item);counts[category]=(counts[category]??0)+1});summary.textContent=Object.entries(legacyCategoryLabels).map(([key,label])=>`${label}：${counts[key]??0}件`).join(' ／ ')+(candidates.some(item=>item.rescue_category)?'':'\n※v53公開APIで安全候補として確認できた範囲のみ。失敗・完了・救済不要の全件分類は次期Edge反映後に表示します。');if(value.diagnostics?.partial){const warning=document.createElement('p');warning.className='notice';warning.textContent=`候補は部分取得です。確認済み ${value.diagnostics.checked_count-value.diagnostics.failed_count}件／未確認 ${value.diagnostics.failed_count}件（${Object.entries(value.diagnostics.error_codes??{}).map(([code,count])=>`${code}:${count}`).join('、')||'原因不明'}）`;list.append(warning)}if(!candidates.length){const empty=document.createElement('p');empty.textContent=value.diagnostics?.partial?'正常確認できた候補はありません。未確認分を0件として扱わないでください。':'安全条件を満たす未返信候補はありません。旧「送信承認キューへ」は使用せず、候補を更新してください。';list.append(empty);return}for(const [key,label] of Object.entries(legacyCategoryLabels)){const items=candidates.filter(item=>legacyCategory(item)===key);if(!items.length)continue;const heading=document.createElement('h4');heading.textContent=`${label}（${items.length}件）`;list.append(heading);items.forEach(item=>list.append(legacyCard(item,refresh)))}}catch(error){summary.textContent='集計できませんでした。';list.textContent=`候補取得失敗：${error.message}`}}
   panel.querySelector('#refreshLegacyRescue').onclick=refresh;anchor.before(panel);refresh()
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',injectLegacyRescue);else injectLegacyRescue()
