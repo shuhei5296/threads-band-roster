@@ -97,8 +97,16 @@ function injectPanel(){
   if(document.querySelector('#sendOneApprovedPanel'))return
   const anchor=document.querySelector('#botDraftsPanel');if(!anchor)return
   const panel=document.createElement('section');panel.className='panel';panel.id='sendOneApprovedPanel'
-  panel.innerHTML='<h3>限定送信（固定2件）</h3><p>各ジョブを個別に承認・最終確認・送信します。通常ポーリング、自動返信、他ジョブは実行しません。</p>'
+  panel.innerHTML='<h3>限定送信（管理者専用）</h3><p>各ジョブを個別に承認・最終確認・送信します。対象情報は管理者認証後に取得し、公開JavaScriptには保存しません。</p>'
   TARGETS.forEach((target,index)=>panel.append(targetCard(target,index)))
+  const loading=document.createElement('p');loading.textContent='登録案内対象を管理者認証で取得しています…';panel.append(loading)
+  invoke({action:'list_registration_guidance_targets'}).then(result=>{
+    loading.remove()
+    if(result.http!==200||result.data?.ok!==true){const p=document.createElement('p');p.textContent=`登録案内対象を取得できません：${result.data?.error??`HTTP ${result.http}`}`;panel.append(p);return}
+    const items=result.data.targets??[]
+    items.forEach((target,index)=>panel.append(targetCard(target,TARGETS.length+index)))
+    if(!items.length){const p=document.createElement('p');p.textContent='安全条件を満たす登録案内対象はありません。';panel.append(p)}
+  }).catch(error=>{loading.textContent=`登録案内対象を取得できません：${error.message}`})
   anchor.before(panel)
 }
 
