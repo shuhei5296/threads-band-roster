@@ -32,6 +32,10 @@ function phaseCRequest(totalValue,hourlyValue){
   return {action:'start_staged_rollout',phase:'C',allowed_usernames:[],max_sends:total,duration_minutes:1440,max_usage_percent:10,hourly_max_sends:hourly,approval:'START_PHASE_C'}
 }
 
+function continuousRequest(){
+  return {action:'start_continuous_operation',daily_max_sends:5,hourly_max_sends:2,max_usage_percent:10,approval:'START_CONTINUOUS_OPERATION'}
+}
+
 function rolloutPanel(){
   if(document.querySelector('#stagedRolloutOpsPanel'))return
   const anchor=document.querySelector('#botDraftsPanel')??document.querySelector('#botDiagnosticPanel')
@@ -52,7 +56,11 @@ function rolloutPanel(){
     <label>24時間の総送信上限 <input id="phaseCTotal" type="number" min="1" max="100" value="2"></label>
     <label>1時間の送信上限 <input id="phaseCHourly" type="number" min="1" max="25" value="2"></label>
     <p>API利用率10%以上・80016・送信結果不明・期限到達・送信上限到達で安全停止します。名簿訂正は部長承認が必要です。</p>
-    <div class="row"><button id="startPhaseC">承認済みフェーズCを開始</button></div>`
+    <div class="row"><button id="startPhaseC">承認済みフェーズCを開始</button></div>
+    <h4>継続自律運用（限定実証合格後に開始）</h4>
+    <div class="notice"><b>通常返信のみ・未返信救済とは別枠</b><p>15分監視／JST日次5件／ローリング60分2件／API利用率10%で停止。80016・結果不明・重大エラー時は停止し、自動再開しません。</p></div>
+    <pre id="continuousStatus" class="result notice">継続運用状態を取得しています…</pre>
+    <div class="row"><button id="refreshContinuous" class="secondary">継続運用状態を更新</button><button id="startContinuous">継続自律運用を開始</button><button id="stopContinuous" class="secondary">継続運用を緊急停止</button></div>`
   const status=panel.querySelector('#rolloutStatus')
   const render=value=>{status.textContent=[
     `BOT：${value.paused?'停止':'稼働'} ／ 自動返信：${value.auto_reply_enabled?'ON':'OFF'} ／ 段階運用：${value.rollout_active?value.phase:'OFF'}`,
@@ -130,6 +138,42 @@ function rolloutPanel(){
     }catch(error){status.textContent=`状態を確認できません：${error.message}。再操作前に「状態を更新」を押してください。`}
     finally{button.disabled=false}
   }
+  const continuousStatus=panel.querySelector('#continuousStatus')
+  const renderContinuous=value=>{continuousStatus.textContent=[
+    `継続運用：${value.active?'稼働中':'停止'} ／ BOT：${value.paused?'停止':'稼働'} ／ 自動返信：${value.auto_reply_enabled?'ON':'OFF'}`,
+    `当日（JST）：${value.daily_sent_count??0}/${value.daily_max_sends??5} ／ 直近60分：${value.hourly_sent_count??0}/${value.hourly_max_sends??2}`,
+    `API利用率：${value.last_usage_percent??0}%/${value.max_usage_percent??10}% ／ 連続失敗：${value.consecutive_failures??0}`,
+    `開始：${fmt(value.started_at)} ／ 停止：${fmt(value.stopped_at)} ／ 有効Cron：${value.active_cron_count??0}`,
+    `最終監視：${fmt(value.last_poll_at)} ／ 停止理由：${value.stop_reason??'なし'}`,
+    value.last_error?`最終エラー：${value.last_error}`:''
+  ].filter(Boolean).join('\n')}
+  const refreshContinuous=async()=>{continuousStatus.textContent='継続運用状態を照会しています…';try{renderContinuous(await rolloutInvoke({action:'get_continuous_operation_status'}))}catch(error){continuousStatus.textContent=`状態照会失敗：${error.message}`}}
+  panel.querySelector('#refreshContinuous').onclick=refreshContinuous
+  panel.querySelector('#stopContinuous').onclick=async()=>{
+    if(!confirm('継続運用・自動返信・監視Cronを直ちに停止しますか？停止後は自動再開しません。'))return
+    try{renderContinuous(await rolloutInvoke({action:'stop_continuous_operation',approval:'EMERGENCY_STOP'}))}catch(error){continuousStatus.textContent=`緊急停止を確認できません：${error.message}`}
+  }
+  panel.querySelector('#startContinuous').onclick=async()=>{
+    const button=panel.querySelector('#startContinuous');if(button.disabled)return
+    const request=continuousRequest()
+    if(!confirm('継続自律運用を開始します。\n対象：開始後の正式登録部員の新規コメント\n監視：15分間隔\n日次上限：5件（日本時間）\n直近60分上限：2件\nAPI利用率10%・80016・結果不明・重大エラーで停止\nThreadsへ実際に返信します。開始しますか？'))return
+    button.disabled=true
+    try{
+      const before=await rolloutInvoke({action:'get_continuous_operation_status'})
+      const staged=await rolloutInvoke({action:'get_staged_rollout_status'})
+      if(before.paused!==true||before.auto_reply_enabled!==false||before.active!==false||before.active_cron_count!==0||staged.rollout_active!==false){
+        renderContinuous(before);continuousStatus.textContent+='\n開始にはBOT停止・自動返信OFF・段階運用OFF・有効Cron 0件が必要です。';return
+      }
+      await rolloutInvoke(request)
+      const actual=await rolloutInvoke({action:'get_continuous_operation_status'});renderContinuous(actual)
+      const cronOk=actual.cron_jobs?.some(j=>j.active&&j.jobname==='threads-roster-bot-poll'&&j.schedule==='*/15 * * * *')
+      if(actual.active!==true||actual.paused!==false||actual.auto_reply_enabled!==true||actual.daily_max_sends!==5||actual.hourly_max_sends!==2||!cronOk){
+        continuousStatus.textContent+='\n指定条件での開始を確認できません。成功とは扱わず、緊急停止してください。'
+      }else continuousStatus.textContent+='\n継続運用の開始を本番設定・Cron・自動返信状態まで照合しました。'
+    }catch(error){continuousStatus.textContent=`開始結果を確認できません：${error.message}。再操作前に状態を更新してください。`}
+    finally{button.disabled=false}
+  }
+  refreshContinuous()
   anchor.before(panel);refresh()
 }
 
