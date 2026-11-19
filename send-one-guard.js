@@ -1,27 +1,7 @@
 const FUNCTION_URL='https://adofdnxbraakxynvclzd.supabase.co/functions/v1/threads-roster-bot'
-const TARGETS=[
-  {jobId:'e70cd523-1a88-4708-be49-8039e9332f77',recipient:'@yatiyuinao',replyTo:'18128900158867058',body:`@yatiyuinao さん🎺
-
-Threads吹奏楽部の登録情報はこちら！
-
-🎼 仮登録：その他パーカッション
-
-現在の内容を確認するため、メイン・サブ・過去に経験しただけの楽器を教えてください。
-
-例：メインはフルート、サブはピッコロ、クラリネットは昔やっていました😊`},
-  {jobId:'5520db7b-e5de-45d7-8781-49a0659bca44',recipient:'@springlives_',replyTo:'17909679606570073',body:`@springlives_ さん🎺
-
-Threads吹奏楽部の登録情報はこちら！
-
-🎼 メイン：チューバ
-🎺 サブ候補：エレキベース
-📝 候補：コントラバス、チューバ
-🎷 経験：ピアノ、フルート
-
-現在の内容を確認するため、メイン・サブ・過去に経験しただけの楽器を教えてください。
-
-例：メインはフルート、サブはピッコロ、クラリネットは昔やっていました😊`},
-]
+// Historical fixed targets are intentionally not rendered. The API supplies
+// only current, unattempted and unsent registration-guidance candidates.
+const TARGETS=[]
 
 function sessionToken(){
   const key=Object.keys(localStorage).find(name=>name.startsWith('sb-')&&name.endsWith('-auth-token'))
@@ -97,7 +77,7 @@ function injectPanel(){
   if(document.querySelector('#sendOneApprovedPanel'))return
   const anchor=document.querySelector('#botDraftsPanel');if(!anchor)return
   const panel=document.createElement('section');panel.className='panel';panel.id='sendOneApprovedPanel'
-  panel.innerHTML='<h3>限定送信（管理者専用）</h3><p>各ジョブを個別に承認・最終確認・送信します。対象情報は管理者認証後に取得し、公開JavaScriptには保存しません。</p>'
+  panel.innerHTML='<h3>限定送信（管理者専用）</h3><p>未試行・未送信で安全条件を満たす登録案内だけを管理者認証後に表示します。完了済み・失敗・結果不明のジョブは再送対象として表示しません。</p>'
   TARGETS.forEach((target,index)=>panel.append(targetCard(target,index)))
   const loading=document.createElement('p');loading.textContent='登録案内対象を管理者認証で取得しています…';panel.append(loading)
   invoke({action:'list_registration_guidance_targets'}).then(result=>{
