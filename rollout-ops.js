@@ -62,14 +62,16 @@ function rolloutPanel(){
     <pre id="continuousStatus" class="result notice">継続運用状態を取得しています…</pre>
     <div class="row"><button id="refreshContinuous" class="secondary">継続運用状態を更新</button><button id="startContinuous">継続自律運用を開始</button><button id="stopContinuous" class="secondary">継続運用を緊急停止</button></div>`
   const status=panel.querySelector('#rolloutStatus')
-  const render=value=>{status.textContent=[
+  const render=value=>{const modernJobStatus=value.processing_jobs!==undefined;status.textContent=[
     `BOT：${value.paused?'停止':'稼働'} ／ 自動返信：${value.auto_reply_enabled?'ON':'OFF'} ／ 段階運用：${value.rollout_active?value.phase:'OFF'}`,
-    `開始：${fmt(value.started_at)} ／ 終了：${fmt(value.ends_at)}`,
+    `過去の試験記録：開始 ${fmt(value.historical_trial_started_at??value.started_at)} ／ 終了 ${fmt(value.historical_trial_ends_at??value.ends_at)}`,
     `許可：${(value.allowed_usernames??[]).map(v=>`@${v}`).join('、')||'全登録部員（フェーズC）'}`,
     `送信：${value.sent_count??0}/${value.max_sends??0} ／ 時間枠：${value.hour_sent_count??0}/${value.hourly_max_sends??0}`,
     `API利用率：${value.last_usage_percent??'不明'}% ／ 連続失敗：${value.consecutive_failures??0}`,
     `最終監視：${fmt(value.last_poll_at)} ／ 有効Cron：${value.active_cron_count??0}`,
-    `失敗ジョブ：${value.failed_jobs??0} ／ 結果確認待ち：${value.unknown_jobs??0}`,
+    modernJobStatus?`処理中：${value.processing_jobs??0} ／ 実際の送信結果不明：${value.unknown_jobs??0}`:`旧API未分類（処理中・再送禁止の合算）：${value.unknown_jobs??0}`,
+    modernJobStatus?`送信失敗：${value.failed_jobs??0} ／ 再送禁止：${value.dead_jobs??0} ／ 送信成功：${value.completed_jobs??0}`:`送信失敗：${value.failed_jobs??0}`,
+    modernJobStatus?`部長確認待ち：${value.manager_review_jobs??0}`:'v58反映後に部長確認待ちを表示します',
     value.last_error?`最終エラー：${value.last_error}`:''
   ].filter(Boolean).join('\n')}
   const refresh=async()=>{status.textContent='状態を照会しています…';try{render(await rolloutInvoke({action:'get_staged_rollout_status'}))}catch(error){status.textContent=`状態照会失敗：${error.message}`}}
@@ -139,15 +141,17 @@ function rolloutPanel(){
     finally{button.disabled=false}
   }
   const continuousStatus=panel.querySelector('#continuousStatus')
-  const renderContinuous=value=>{continuousStatus.textContent=[
+  const renderContinuous=(value,jobs={})=>{const modern=jobs.processing_jobs!==undefined;continuousStatus.textContent=[
     `継続運用：${value.active?'稼働中':'停止'} ／ BOT：${value.paused?'停止':'稼働'} ／ 自動返信：${value.auto_reply_enabled?'ON':'OFF'}`,
     `当日（JST）：${value.daily_sent_count??0}/${value.daily_max_sends??5} ／ 直近60分：${value.hourly_sent_count??0}/${value.hourly_max_sends??2}`,
     `API利用率：${value.last_usage_percent??0}%/${value.max_usage_percent??10}% ／ 連続失敗：${value.consecutive_failures??0}`,
-    `開始：${fmt(value.started_at)} ／ 停止：${fmt(value.stopped_at)} ／ 有効Cron：${value.active_cron_count??0}`,
+    `継続運用開始：${fmt(value.started_at)} ／ 停止：${fmt(value.stopped_at)} ／ 有効Cron：${value.active_cron_count??0}`,
     `最終監視：${fmt(value.last_poll_at)} ／ 停止理由：${value.stop_reason??'なし'}`,
+    modern?`処理中：${jobs.processing_jobs??0} ／ 結果不明：${jobs.unknown_jobs??0} ／ 失敗：${jobs.failed_jobs??0} ／ 再送禁止：${jobs.dead_jobs??0}`:`旧API未分類：${jobs.unknown_jobs??0} ／ 失敗：${jobs.failed_jobs??0}`,
+    modern?`部長確認待ち：${jobs.manager_review_jobs??0}`:'v58反映後に部長確認待ちを表示します',
     value.last_error?`最終エラー：${value.last_error}`:''
   ].filter(Boolean).join('\n')}
-  const refreshContinuous=async()=>{continuousStatus.textContent='継続運用状態を照会しています…';try{renderContinuous(await rolloutInvoke({action:'get_continuous_operation_status'}))}catch(error){continuousStatus.textContent=`状態照会失敗：${error.message}`}}
+  const refreshContinuous=async()=>{continuousStatus.textContent='継続運用状態を照会しています…';try{const [value,jobs]=await Promise.all([rolloutInvoke({action:'get_continuous_operation_status'}),rolloutInvoke({action:'get_staged_rollout_status'})]);renderContinuous(value,jobs)}catch(error){continuousStatus.textContent=`状態照会失敗：${error.message}`}}
   panel.querySelector('#refreshContinuous').onclick=refreshContinuous
   panel.querySelector('#stopContinuous').onclick=async()=>{
     if(!confirm('継続運用・自動返信・監視Cronを直ちに停止しますか？停止後は自動再開しません。'))return
