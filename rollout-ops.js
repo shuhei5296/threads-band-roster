@@ -60,7 +60,12 @@ function rolloutPanel(){
     <h4>継続自律運用（限定実証合格後に開始）</h4>
     <div class="notice"><b>通常返信のみ・未返信救済とは別枠</b><p>15分監視／JST日次5件／ローリング60分2件／API利用率10%で停止。80016・結果不明・重大エラー時は停止し、自動再開しません。</p></div>
     <pre id="continuousStatus" class="result notice">継続運用状態を取得しています…</pre>
-    <div class="row"><button id="refreshContinuous" class="secondary">継続運用状態を更新</button><button id="startContinuous">継続自律運用を開始</button><button id="stopContinuous" class="secondary">継続運用を緊急停止</button></div>`
+    <div class="row"><button id="refreshContinuous" class="secondary">継続運用状態を更新</button><button id="startContinuous">継続自律運用を開始</button><button id="stopContinuous" class="secondary">継続運用を緊急停止</button></div>
+    <h4>v58.1 完全読み取り無送信検証</h4>
+    <div class="notice"><b>DB・ジョブ・カーソル・Cronを変更しません</b><p>Threadsから対象コメントと親返信を読み取り、所有者・会話欠損・部長確認候補だけを判定します。返信は送信しません。</p></div>
+    <label>確認するコメントID <input id="v581DryRunReplyId" type="text" inputmode="numeric" value="17954111346347078"></label>
+    <div class="row"><button id="runV581DryRun" class="secondary">無送信dry-runを実行</button></div>
+    <pre id="v581DryRunResult" class="result notice">未実行です。</pre>`
   const status=panel.querySelector('#rolloutStatus')
   const render=value=>{const modernJobStatus=value.processing_jobs!==undefined;status.textContent=[
     `BOT：${value.paused?'停止':'稼働'} ／ 自動返信：${value.auto_reply_enabled?'ON':'OFF'} ／ 段階運用：${value.rollout_active?value.phase:'OFF'}`,
@@ -175,6 +180,26 @@ function rolloutPanel(){
         continuousStatus.textContent+='\n指定条件での開始を確認できません。成功とは扱わず、緊急停止してください。'
       }else continuousStatus.textContent+='\n継続運用の開始を本番設定・Cron・自動返信状態まで照合しました。'
     }catch(error){continuousStatus.textContent=`開始結果を確認できません：${error.message}。再操作前に状態を更新してください。`}
+    finally{button.disabled=false}
+  }
+  panel.querySelector('#runV581DryRun').onclick=async()=>{
+    const result=panel.querySelector('#v581DryRunResult')
+    const button=panel.querySelector('#runV581DryRun')
+    const replyId=String(panel.querySelector('#v581DryRunReplyId').value??'').trim()
+    if(!/^\d{10,32}$/.test(replyId)){result.textContent='有効なコメントIDを入力してください。';return}
+    button.disabled=true;result.textContent='無送信で読み取り・分類しています…'
+    try{
+      const value=await rolloutInvoke({action:'v581_read_only_dry_run',reply_id:replyId,allow_saved_fallback:true})
+      result.textContent=[
+        `コメント：${value.comment_id} ／ 投稿者：@${value.username||'不明'}`,
+        `親返信：${value.parent_reply_id??'なし'} ／ 親BOT判定：${value.parent_owned?'確認済み':'未確認'}（${value.parent_evidence}）`,
+        `分類：${value.classification} ／ 理由：${value.reason}`,
+        `本人照合：${value.identity_status} ／ 名簿登録：${value.member_registered?'あり':'なし'}`,
+        `既存処理：${value.already_handled?'あり':'なし'} ／ 既存部長確認：${value.existing_review_count??0}`,
+        `API：${value.api_calls??0}回 ／ 利用率：${value.api_usage_percent??0}%/${value.usage_limit_percent??10}%`,
+        `DB更新：${value.writes_performed??0}件 ／ Threads送信：${value.replies_sent??0}件`,
+      ].join('\n')
+    }catch(error){result.textContent=`dry-run失敗：${error.message}`}
     finally{button.disabled=false}
   }
   refreshContinuous()
