@@ -11,7 +11,7 @@ function rolloutSessionToken(){
 async function rolloutInvoke(body){
   const response=await fetch(ROLLOUT_FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${rolloutSessionToken()}`},body:JSON.stringify(body)})
   let data={};try{data=await response.json()}catch{}
-  if(!response.ok||data.ok!==true)throw new Error(data.error??`HTTP ${response.status}`)
+  if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error??`HTTP ${response.status}`),{httpStatus:response.status})
   return data
 }
 
@@ -189,8 +189,11 @@ function rolloutPanel(){
     if(!/^\d{10,32}$/.test(replyId)){result.textContent='有効なコメントIDを入力してください。';return}
     button.disabled=true;result.textContent='無送信で読み取り・分類しています…'
     try{
-      const value=await rolloutInvoke({action:'v581_read_only_dry_run',reply_id:replyId,allow_saved_fallback:true})
+      const value=await rolloutInvoke({action:'v581_read_only_dry_run',reply_id:replyId,allow_saved_fallback:false})
+      if(value.reply_source!=='threads_api')throw new Error('Threads APIからの取得を確認できませんでした。')
       result.textContent=[
+        `取得元：${value.reply_source} ／ Threads API取得：成功 ／ フォールバック：無効`,
+        `Threads HTTP：${value.http_statuses?.join('、')||'未報告'} ／ エラーコード：${value.threads_error_code??'報告なし'}`,
         `コメント：${value.comment_id} ／ 投稿者：@${value.username||'不明'}`,
         `親返信：${value.parent_reply_id??'なし'} ／ 親BOT判定：${value.parent_owned?'確認済み':'未確認'}（${value.parent_evidence}）`,
         `分類：${value.classification} ／ 理由：${value.reason}`,
@@ -199,7 +202,7 @@ function rolloutPanel(){
         `API：${value.api_calls??0}回 ／ 利用率：${value.api_usage_percent??0}%/${value.usage_limit_percent??10}%`,
         `DB更新：${value.writes_performed??0}件 ／ Threads送信：${value.replies_sent??0}件`,
       ].join('\n')
-    }catch(error){result.textContent=`dry-run失敗：${error.message}`}
+    }catch(error){result.textContent=`Threads API取得：未確認 ／ フォールバック：無効\nEdge HTTP：${error.httpStatus??'未取得'}\n${error.message}`}
     finally{button.disabled=false}
   }
   refreshContinuous()
